@@ -1,7 +1,12 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from pathlib import Path
-import struct, json, base64, os, shutil
+import struct, json, base64
+try:
+    from tkinterdnd2 import TkinterDnD
+    BaseTk = TkinterDnD.Tk
+except ImportError:
+    BaseTk = tk.Tk
 
 APP_TITLE = "Yamaha Style Studio"
 VERSION = "0.2.0"
@@ -90,7 +95,7 @@ class MidiStyle:
 KIND_NAMES={128:"Note Off",144:"Note On",160:"Poly Aftertouch",176:"Control Change",192:"Program Change",208:"Channel Pressure",224:"Pitch Bend"}
 def clamp(v,lo,hi): return max(lo,min(hi,int(v)))
 
-class App(tk.Tk):
+class App(BaseTk):
     def __init__(self):
         super().__init__(); self.title("Yamaha Style Studio"); self.geometry("1280x820"); self.minsize(980,660)
         self.configure(bg="#111827"); self.stylefile=None; self.data=None; self.current_track=0; self.dirty=False; self.project_path=None
@@ -386,14 +391,4 @@ class App(tk.Tk):
             self.filelabel.configure(text=path.name); self._refresh_all(); self.status.configure(text=f"נפתח פרויקט: {path}")
         except Exception as e:messagebox.showerror("שגיאה בפתיחת פרויקט",str(e))
 if __name__=="__main__":
-    try:
-        from tkinterdnd2 import TkinterDnD
-        class StudioApp(App, TkinterDnD.Tk):
-            def __init__(self):
-                TkinterDnD.Tk.__init__(self)
-                self.title("Yamaha Style Studio"); self.geometry("1280x820"); self.minsize(980,660)
-                self.configure(bg="#111827"); self.stylefile=None; self.data=None; self.current_track=0; self.dirty=False; self.project_path=None
-                self._style(); self._ui(); self._setup_drop()
-        StudioApp().mainloop()
-    except ImportError:
-        App().mainloop()
+    App().mainloop()
