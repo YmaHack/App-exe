@@ -1,1 +1,1 @@
-# No third-party dependencies. Tkinter is included with standard Windows Python.
+tkinterdnd2>=0.4.2
