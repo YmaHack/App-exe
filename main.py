@@ -254,24 +254,63 @@ class App(BaseTk):
         if not chans:return
         for ch,info in chans.items(): self._set_cc(ch,7,max(0,info["volume"]-amount))
         self.dirty=True; self._refresh_all(); self.status.configure(text=f"כל {len(chans)} הערוצים הונמכו ב־{amount} יחידות MIDI (מינימום 0).")
+    def _midi_channel_features(self):
+        features={}
+        if not self.data:return features
+        for ti,tr in enumerate(self.data.tracks):
+            for e in tr:
+                if e[1]!="channel": continue
+                _,_,ch,kind,a,b=e
+                f=features.setdefault(ch,{"notes":0,"velocity_sum":0,"velocity_count":0,"controllers":0,"program":None,"tracks":set(),"ticks":0})
+                f["tracks"].add(ti); f["ticks"]=max(f["ticks"],e[0])
+                if kind==192:f["program"]=a
+                elif kind==176:f["controllers"]+=1
+                elif kind==144 and b>0:
+                    f["notes"]+=1; f["velocity_sum"]+=b; f["velocity_count"]+=1
+        for ch,f in features.items():
+            f["avg_velocity"]=f["velocity_sum"]/max(1,f["velocity_count"])
+        return features
     def smart_mix(self):
         if not self.data:return
-        chans=self._channels()
-        if not chans: self.ai_text.delete("1.0","end"); self.ai_text.insert("1.0","לא נמצאו ערוצי MIDI."); return
-        self.suggestions={}
-        lines=["הצעת Smart Mix — בדוק לפני החלה:",""]
+        chans=self._channels(); features=self._midi_channel_features()
+        if not chans:
+            self.ai_text.delete("1.0","end"); self.ai_text.insert("1.0","לא נמצאו ערוצי MIDI."); return
+        # Offline expert-system heuristic: combines note density, average note velocity,
+        # current CC7 and drum-channel role. It does not require internet or a paid API.
+        active=[ch for ch in chans if features.get(ch,{}).get("notes",0)>0]
+        densities=[features[ch]["notes"] for ch in active]
+        median_density=sorted(densities)[len(densities)//2] if densities else 1
+        self.suggestions={}; lines=["מנוע איזון חכם מקומי — ניתוח MIDI","="*38,
+            "הניתוח בודק צפיפות תווים, מהירות תווים, ערך CC7 ותפקיד ערוץ.",
+            "זו מערכת מומחה מקומית (לא מודל רשת עצבית ולא ניתוח אודיו).",""]
         for ch,info in sorted(chans.items()):
-            cur=info["volume"]
-            if ch==9: target=min(cur,100); role="תופים (ערוץ 10)"
-            elif cur>115: target=105; role="עוצמה גבוהה"
-            elif cur<45: target=min(75,cur+15); role="עוצמה נמוכה"
-            else: target=cur; role="ללא שינוי מוצע"
+            cur=info["volume"]; f=features.get(ch,{})
+            notes=f.get("notes",0); vel=f.get("avg_velocity",0)
+            if ch==9:
+                target=min(cur,100); role="תופים"
+            elif notes==0:
+                target=cur; role="אין תווי Note On לזיהוי"
+            else:
+                # Dense parts get a modest reduction; quiet velocity parts can be lifted gently.
+                target=float(cur)
+                if notes>median_density*1.8: target-=8
+                elif notes<median_density*0.55: target+=4
+                if vel>108: target-=5
+                elif 0<vel<55: target+=4
+                if cur>115: target=min(target,108)
+                if cur<35 and vel>85: target=max(target,cur+3)
+                target=clamp(round(target),0,127)
+                role=f"{notes} תווים, מהירות ממוצעת {vel:.0f}"
             self.suggestions[ch]=target
-            lines.append(f"ערוץ {ch+1:02d} | {role}: {cur} → {target}")
-        lines += ["","ההצעה מבוססת כללים פשוטים בלבד ואינה מנתחת אודיו. לחץ על 'החל הצעות' כדי לכתוב את ערכי CC7."]
-        self.ai_text.delete("1.0","end"); self.ai_text.insert("1.0","\n".join(lines))
+            delta=target-cur
+            change="ללא שינוי" if delta==0 else (f"הנמכה {abs(delta)}" if delta<0 else f"הגברה {delta}")
+            lines.append(f"ערוץ {ch+1:02d} | CC7 {cur} → {target} | {change}")
+            lines.append(f"   מאפיינים: {role}; רצועות: {len(f.get('tracks',[]))}")
+        lines += ["","ההצעות הן נקודת פתיחה בלבד. הן לא מבטיחות איזון נכון בכל כלי Yamaha.",
+                  "האזן לתוצאה במקלדת, שמור עותק, ואשר החלה רק אם היא מתאימה."]
+        self.ai_text.delete("1.0","end"); self.ai_text.insert("1.0","\\n".join(lines))
         if hasattr(self,"apply_suggestions_btn"): self.apply_suggestions_btn.destroy()
-        self.apply_suggestions_btn=ttk.Button(self.project_tab,text="החל הצעות",style="Accent.TButton",command=self.apply_suggestions)
+        self.apply_suggestions_btn=ttk.Button(self.project_tab,text="החל הצעות על הערוצים",style="Accent.TButton",command=self.apply_suggestions)
         self.apply_suggestions_btn.pack(anchor="w",pady=5)
     def apply_suggestions(self):
         if not getattr(self,"suggestions",None):return
